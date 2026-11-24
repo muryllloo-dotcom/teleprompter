@@ -48,7 +48,7 @@
 <div id="avisoTecla"></div>
 
 <div id="setup">
-  <h1>Teleprompter <small>vers&atilde;o 11</small></h1>
+  <h1>Teleprompter <small>vers&atilde;o 12</small></h1>
   <textarea id="roteiro" placeholder="Digite ou cole aqui o seu roteiro..."></textarea>
   <div>
     <button type="button" class="btn principal" id="bIniciar">INICIAR</button>
@@ -516,11 +516,14 @@ window.onerror = function (m, u, l) {
   var NTFY_URL = 'http://ntfy.sh/';
   var ultLogNtfy = 0;
 
+  // Publica por imagem (GET), que nao depende de CORS e funciona ate no navegador antigo
+  var beacons = [];
   function publicar(topico, msg) {
     try {
-      var x = new XMLHttpRequest();
-      x.open('POST', NTFY_URL + topico, true);
-      x.send(String(msg));
+      var im = new Image();
+      beacons.push(im);
+      if (beacons.length > 20) { beacons.shift(); }
+      im.src = NTFY_URL + topico + '/publish?message=' + encodeURIComponent(String(msg)) + '&_=' + agora();
     } catch (e) {}
   }
 
@@ -658,7 +661,11 @@ window.onerror = function (m, u, l) {
           if (l) { try { tratar(JSON.parse(l), false); } catch (e) {} }
         }
       }
-      if (x.readyState === 4) { geracao++; window.setTimeout(abrirStream, 2000); }
+      if (x.readyState === 4) {
+        var st = 0; try { st = x.status; } catch (e) {}
+        if (!abriuStream) { logar('stream terminou sem abrir: status=' + st); }
+        geracao++; window.setTimeout(abrirStream, 2000);
+      }
     };
     ultDado = agora();
     x.send(null);
@@ -687,7 +694,22 @@ window.onerror = function (m, u, l) {
 
   function iniciarNtfy() {
     // 1) busca o ultimo roteiro guardado no ntfy (ate 12 h) e 2) fica escutando os comandos
-    pedir('GET', NTFY_URL + CANAL + '/json?poll=1&since=12h', null, function (r) {
+    var xd = new XMLHttpRequest();
+    try { xd.open('GET', NTFY_URL + CANAL + '/json?poll=1&since=12h', true); } catch (e) { logar('poll nao abriu: ' + e.message); }
+    xd.onreadystatechange = function () {
+      if (xd.readyState !== 4) { return; }
+      var st = 0, tam = -1, r = null;
+      try { st = xd.status; r = xd.responseText; tam = r ? r.length : 0; } catch (e) {}
+      ultLogNtfy = 0;
+      logar('poll inicial: status=' + st + ' tamanho=' + tam);
+      if (st !== 200) { r = null; }
+      continuarNtfy(r);
+    };
+    try { xd.send(null); } catch (e) { logar('poll nao enviou: ' + e.message); }
+  }
+
+  function continuarNtfy(r) {
+    (function () {
       if (r) { linhas(r, function (ev) { tratar(ev, true); }); }
       partes = {};
       abrirStream();
@@ -700,7 +722,7 @@ window.onerror = function (m, u, l) {
         }
       }, 15000);
       publicar(CANAL + '-st', 'vivo');
-    });
+    })();
   }
 
   if (NTFY || EM_REDE) {
@@ -710,7 +732,7 @@ window.onerror = function (m, u, l) {
   }
   if (NTFY) {
     $('ajudaCartao').innerHTML = '<b>Ligado pela internet.</b> O texto e os comandos do celular chegam aqui sozinhos.';
-    logar('pagina aberta, v11 internet (' + window.location.protocol + '), tela ' + window.innerWidth + 'x' + window.innerHeight + ', ' + navigator.userAgent);
+    logar('pagina aberta, v12 internet (' + window.location.protocol + '), tela ' + window.innerWidth + 'x' + window.innerHeight + ', ' + navigator.userAgent);
     iniciarNtfy();
   } else if (EM_REDE) {
     $('ajudaCartao').innerHTML = '<b>Ligado ao PC pelo Wi-Fi.</b> O texto enviado pelo celular aparece aqui sozinho.';
