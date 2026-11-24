@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-title" content="Teleprompter">
+<title>Teleprompter</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: #111; color: #f2f2f2;
+    font-family: -apple-system, system-ui, Arial, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px 0; }
+  h1 small { font-size: 13px; color: #777; font-weight: 400; }
+  #tablet { font-size: 14px; margin-bottom: 12px; color: #aaa; }
+  #tablet.on { color: #5fd07a; }
+  #tablet.off { color: #f0a060; }
+  textarea { width: 100%; height: 34vh; font-size: 16px; padding: 10px; border-radius: 10px;
+    border: 1px solid #444; background: #1c1c1c; color: #fff; }
+  button { font: inherit; font-size: 16px; padding: 14px 10px; border-radius: 10px;
+    border: 1px solid #555; background: #2a2a2a; color: #fff; }
+  button:active { background: #444; }
+  .verde { background: #1b7a34; border-color: #2aa84b; font-weight: 600; }
+  .azul { background: #12407a; border-color: #2a66b3; font-weight: 600; }
+  #play { width: 100%; font-size: 30px; font-weight: 700; padding: 28px 10px; margin-bottom: 10px; }
+  .grade { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .grande { font-size: 19px; padding: 20px 8px; }
+  #enviar { width: 100%; margin-top: 10px; font-size: 19px; }
+  #status { min-height: 22px; margin: 8px 0 14px 0; font-size: 15px; color: #5fd07a; }
+  #status.erro { color: #f0a060; }
+  h2 { font-size: 15px; color: #aaa; margin: 22px 0 8px 0; font-weight: 500; }
+  #btStatus { min-height: 22px; margin: 10px 0; font-size: 16px; color: #ffd84a; }
+  p.ajuda { color: #999; font-size: 14px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<h1>Teleprompter <small>internet v1</small></h1>
+<div id="tablet">Procurando o tablet...</div>
+
+<button id="play" class="verde" data-c="alternar">&#9654; / &#10074;&#10074;&nbsp; Play / Pause</button>
+<div class="grade" style="margin-bottom:22px">
+  <button class="grande" data-c="menos">&#8722; Devagar</button>
+  <button class="grande" data-c="mais">+ R&aacute;pido</button>
+  <button data-c="cima">&#9650; Voltar texto</button>
+  <button data-c="baixo">&#9660; Avan&ccedil;ar texto</button>
+</div>
+
+<textarea id="t" placeholder="Cole o roteiro aqui"></textarea>
+<button id="enviar" class="verde">Enviar para o tablet</button>
+<div id="status"></div>
+
+<h2>Mais controles</h2>
+<div class="grade">
+  <button data-c="letra-">Letra menor</button>
+  <button data-c="letra+">Letra maior</button>
+  <button data-c="inicio">Voltar ao in&iacute;cio</button>
+  <button data-c="espelho">Espelhar</button>
+</div>
+
+<h2>Controle Bluetooth (MOCUTE)</h2>
+<button id="ativarBt" class="azul" style="width:100%">&#127918; Ativar controle Bluetooth</button>
+<div id="btStatus"></div>
+<p class="ajuda">Toque num espa&ccedil;o vazio desta p&aacute;gina antes de usar o controle. Deixe a p&aacute;gina aberta e a
+tela do celular ligada. N&atilde;o precisa do computador: o tablet e o celular conversam pela internet.</p>
+
+<script>
+// Canal secreto: o mesmo gravado na pagina do tablet
+const CANAL = 'tp-zw933qp89i4qinnaku';
+const NTFY = 'https://ntfy.sh/';
+const $ = (id) => document.getElementById(id);
+const status = (m, erro) => { $('status').className = erro ? 'erro' : ''; $('status').textContent = m; };
+
+async function publicar(topico, msg) {
+  const r = await fetch(NTFY + topico, { method: 'POST', body: msg });
+  if (!r.ok) throw new Error('ntfy respondeu ' + r.status);
+}
+let ultLog = 0;
+function registrar(m) {
+  if (Date.now() - ultLog < 4000) return;   // o ntfy.sh limita mensagens por dia
+  ultLog = Date.now();
+  publicar(CANAL + '-log', 'CELULAR ' + m).catch(() => {});
+}
+
+// ---- Comandos ----
+async function comando(c) {
+  try { await publicar(CANAL, 'cmd:' + c); }
+  catch (e) { status('Comando não enviado. O celular está com internet?', true); }
+}
+document.querySelectorAll('button[data-c]').forEach((b) => {
+  b.addEventListener('click', () => { comando(b.dataset.c); b.blur(); });
+});
+
+// ---- Texto: vai codificado e em partes (o ntfy.sh aceita ate 4 KB por mensagem) ----
+function partesDoTexto(t) {
+  const cod = encodeURIComponent(t), out = [];
+  let i = 0;
+  while (i < cod.length) {
+    let fim = Math.min(i + 3000, cod.length);
+    const pct = cod.lastIndexOf('%', fim - 1);
+    if (fim < cod.length && pct > fim - 3) fim = pct;   // nao corta um %XX ao meio
+    out.push(cod.slice(i, fim));
+    i = fim;
+  }
+  return out;
+}
+$('enviar').addEventListener('click', async () => {
+  const t = $('t').value;
+  if (!t.trim()) { status('Cole um texto primeiro.', true); return; }
+  const id = Date.now().toString(36), ps = partesDoTexto(t);
+  status('Enviando...');
+  try {
+    for (let k = 0; k < ps.length; k++) await publicar(CANAL, 'txt:' + id + ':' + k + ':' + ps.length + ':' + ps[k]);
+    status('Enviado! ' + t.length + ' letras. Aparece no tablet em alguns segundos.');
+    try { localStorage.setItem('tp_texto', t); } catch (e) {}
+  } catch (e) { status('Não consegui enviar: ' + e.message, true); }
+});
+try { const s = localStorage.getItem('tp_texto'); if (s) $('t').value = s; } catch (e) {}
+
+// ---- O tablet responde em <canal>-st ----
+let ultSinal = 0;
+function mostrarTablet() {
+  const s = (Date.now() - ultSinal) / 1000;
+  if (ultSinal && s < 90) { $('tablet').className = 'on'; $('tablet').textContent = '● Tablet conectado'; }
+  else { $('tablet').className = 'off'; $('tablet').textContent = '○ Tablet sem resposta (abra a página nele)'; }
+}
+try {
+  const es = new EventSource(NTFY + CANAL + '-st/sse');
+  es.onmessage = (ev) => {
+    try {
+      const m = JSON.parse(ev.data).message || '';
+      ultSinal = Date.now(); mostrarTablet();
+      if (m.indexOf('texto:') === 0) status('O tablet recebeu o texto (' + m.slice(6) + ' letras).');
+    } catch (e) {}
+  };
+} catch (e) {}
+setInterval(mostrarTablet, 5000);
+// Pergunta ao tablet se ele esta ai (ao abrir e quando a pagina volta a aparecer)
+const pingar = () => publicar(CANAL, 'ping').catch(() => {});
+pingar();
+document.addEventListener('visibilitychange', () => { if (!document.hidden) pingar(); });
+registrar('pagina aberta (' + navigator.userAgent + ')');
+
+// ---- Controle Bluetooth: teclas (o MOCUTE manda F19 = 130) ----
+const TECLAS = { 130: 'alternar', 32: 'alternar', 13: 'alternar', 179: 'alternar', 39: 'mais', 37: 'menos',
+  40: 'baixo', 38: 'cima', 34: 'baixo', 33: 'cima' };
+const ROTULO = { alternar: 'rolar / pausar', mais: 'mais rápido', menos: 'mais devagar', baixo: 'avançar', cima: 'voltar' };
+function botao(nome, c) { $('btStatus').textContent = 'Botão ' + nome + ' → ' + ROTULO[c]; comando(c); }
+document.addEventListener('keydown', (e) => {
+  if (document.activeElement === $('t')) return;
+  const c = TECLAS[e.keyCode];
+  if (c) { e.preventDefault(); botao(e.key || String(e.keyCode), c); }
+  else { $('btStatus').textContent = 'Botão ' + e.keyCode + ' (' + e.key + ') sem função'; registrar('tecla sem funcao ' + e.keyCode + ' ' + e.key); }
+});
+
+// ---- Controle Bluetooth: botoes de musica (faixa silenciosa + Media Session) ----
+function faixaSilenciosa() {
+  const sr = 8000, n = sr * 2, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, i % 2 ? 1 : -1, true);
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+}
+const audio = new Audio();
+audio.loop = true;
+audio.src = faixaSilenciosa();
+let btAtivo = false;
+function manterTocando() {
+  if (!btAtivo) return;
+  audio.play().catch(() => {});
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+}
+$('ativarBt').addEventListener('click', async () => {
+  try { await audio.play(); } catch (e) { $('btStatus').textContent = 'O celular não deixou ativar: ' + e.message; return; }
+  btAtivo = true;
+  if ('mediaSession' in navigator) {
+    try { navigator.mediaSession.metadata = new MediaMetadata({ title: 'Teleprompter', artist: 'Controle ativo' }); } catch (e) {}
+    const liga = (acao, c, nome) => {
+      try { navigator.mediaSession.setActionHandler(acao, () => { botao(nome, c); manterTocando(); }); } catch (e) {}
+    };
+    liga('play', 'alternar', 'Play'); liga('pause', 'alternar', 'Pause');
+    liga('nexttrack', 'mais', 'Próxima'); liga('previoustrack', 'menos', 'Anterior');
+    liga('seekforward', 'baixo', 'Avançar'); liga('seekbackward', 'cima', 'Voltar');
+    navigator.mediaSession.playbackState = 'playing';
+  }
+  $('btStatus').textContent = '● Controle ativo. Aperte os botões do MOCUTE.';
+  $('ativarBt').textContent = '✔ Controle Bluetooth ativo';
+});
+audio.addEventListener('pause', () => { if (btAtivo) setTimeout(manterTocando, 200); });
+</script>
+</body>
+</html>
