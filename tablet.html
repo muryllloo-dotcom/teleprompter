@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Teleprompter</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; color: #fff;
+    font-family: Arial, Helvetica, sans-serif; -webkit-text-size-adjust: none; }
+  * { -webkit-box-sizing: border-box; box-sizing: border-box; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+
+  /* Tela de edicao */
+  #setup { padding: 12px; }
+  #setup h1 { font-size: 22px; margin: 4px 0 10px 0; }
+  #setup h1 small { font-size: 13px; color: #777; font-weight: normal; }
+  #setup p { font-size: 14px; color: #aaa; margin: 8px 0; line-height: 1.4; }
+  #roteiro { display: block; width: 100%; height: 240px; font-size: 18px; padding: 10px;
+    background: #1c1c1c; color: #fff; border: 1px solid #555; border-radius: 6px; }
+  button.btn { display: inline-block; font-family: inherit; font-size: 18px; padding: 12px 16px;
+    margin: 4px 4px 4px 0; background: #333; color: #fff; border: 1px solid #666;
+    border-radius: 6px; cursor: pointer; -webkit-appearance: none; }
+  button.principal { background: #1b7a34; border-color: #2aa84b; font-weight: bold; font-size: 22px; padding: 14px 28px; }
+  button.perigo { background: #5a1f1f; border-color: #8a3a3a; }
+  #caixaArquivo { margin-top: 8px; padding-top: 8px; border-top: 1px solid #333; }
+  #msg { font-size: 16px; color: #7fd18f; padding: 6px 0; min-height: 20px; }
+  #msg.erro { color: #f0a060; }
+  #arquivo { font-size: 16px; color: #fff; margin-top: 6px; }
+  #avisoTecla { display: none; position: fixed; top: 8px; right: 8px; z-index: 30;
+    background: #222; color: #ffd84a; border: 1px solid #666; border-radius: 6px;
+    font-size: 22px; font-weight: bold; padding: 8px 14px; }
+  #erroJs { display: none; background: #700; color: #fff; font-size: 14px; padding: 8px; }
+
+  /* Tela de leitura: a propria pagina rola (rolagem nativa do navegador) */
+  #leitura { display: none; cursor: pointer; }
+  #texto { padding: 0 5%; font-weight: bold; line-height: 1.35;
+    white-space: pre-wrap; word-wrap: break-word; }
+
+  #barra { display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    background: #141414; border-top: 1px solid #555; padding: 6px; text-align: center; }
+  #barra button.btn { font-size: 16px; padding: 10px 12px; margin: 3px 2px; }
+  #barra button.principal { font-size: 18px; padding: 10px 18px; }
+  #info { font-size: 14px; color: #bbb; padding: 4px; }
+</style>
+</head>
+<body>
+
+<div id="erroJs"></div>
+<div id="avisoTecla"></div>
+
+<div id="setup">
+  <h1>Teleprompter <small>vers&atilde;o 11</small></h1>
+  <textarea id="roteiro" placeholder="Digite ou cole aqui o seu roteiro..."></textarea>
+  <div>
+    <button type="button" class="btn principal" id="bIniciar">INICIAR</button>
+    <button type="button" class="btn perigo" id="bLimpar">Limpar texto</button>
+  </div>
+  <div id="caixaArquivo">
+    <button type="button" class="btn" id="bCarregar">Carregar roteiro do cart&atilde;o</button>
+    <div id="msg"></div>
+    <p>Ou escolha o arquivo no cart&atilde;o (.txt ou o arquivo colado pelo iPhone):<br>
+    <input type="file" id="arquivo"></p>
+  </div>
+  <p><b>Como usar:</b> toque em INICIAR e depois no bot&atilde;o verde ROLAR. Para pausar,
+  toque em qualquer lugar do texto. Pausado, arraste o dedo normalmente para voltar ou
+  avan&ccedil;ar, e use os bot&otilde;es de baixo para ajustar velocidade, letra e espelho.</p>
+  <p id="ajudaCartao"><b>Roteiro pelo cart&atilde;o:</b> no iPhone, copie o texto e cole dentro da pasta
+  <b>Teleprompter</b> do cart&atilde;o. Ao abrir esta p&aacute;gina o texto novo &eacute; carregado sozinho.</p>
+</div>
+
+<div id="leitura"><div id="flip"><div id="texto"></div></div></div>
+
+<div id="barra">
+  <div id="info"></div>
+  <button type="button" class="btn principal" id="bRolar">ROLAR</button>
+  <button type="button" class="btn" id="bVelMenos">Vel &minus;</button>
+  <button type="button" class="btn" id="bVelMais">Vel +</button>
+  <button type="button" class="btn" id="bFonteMenos">Letra &minus;</button>
+  <button type="button" class="btn" id="bFonteMais">Letra +</button>
+  <button type="button" class="btn" id="bEspelho">Espelho</button>
+  <button type="button" class="btn" id="bInicio">In&iacute;cio</button>
+  <button type="button" class="btn" id="bEditar">Editar</button>
+</div>
+
+<script>
+// Mostra na tela qualquer erro de script, para facilitar o diagnostico no tablet
+window.onerror = function (m, u, l) {
+  var d = document.getElementById('erroJs');
+  if (d) { d.style.display = 'block'; d.innerHTML = 'Erro: ' + m + ' (linha ' + l + ')'; }
+};
+
+(function () {
+  function $(id) { return document.getElementById(id); }
+
+  var setup = $('setup'), leitura = $('leitura'), flip = $('flip'), texto = $('texto'),
+      barra = $('barra'), info = $('info'), roteiro = $('roteiro');
+
+  var vel = 40;        // pixels por segundo
+  var fonte = 48;      // px
+  var espelho = 0;     // 0 normal, 1 horizontal, 2 vertical, 3 ambos
+  var pos = 0;         // quanto do texto ja passou (px)
+  var rodando = false;
+  var lendo = false;
+  var ultimo = 0;
+  var relogio = null;
+  var nomesEspelho = ['Normal', 'Espelho H', 'Espelho V', 'Espelho H+V'];
+
+  // Guarda no tablet; se o navegador nao deixar, guarda so enquanto a pagina estiver aberta
+  var memoria = {};
+  function salvar(k, v) {
+    memoria[k] = String(v);
+    try { window.localStorage.setItem('tp_' + k, String(v)); } catch (e) {}
+  }
+  function ler(k) {
+    var v = null;
+    try { v = window.localStorage.getItem('tp_' + k); } catch (e) {}
+    if (v === null && memoria.hasOwnProperty(k)) { v = memoria[k]; }
+    return v;
+  }
+  function agora() { return new Date().getTime(); }
+  function ao(id, f) { $(id).addEventListener('click', f, false); }
+
+  // ---- Rolagem: usa a rolagem nativa da pagina ----
+  function alturaJanela() { return window.innerHeight || document.documentElement.clientHeight || 600; }
+  function alturaPagina() { return Math.max(document.body.scrollHeight, document.documentElement.scrollHeight); }
+  // Plano B: se o navegador ignorar a rolagem da pagina, o texto e empurrado para cima
+  var modoTopo = false, testouRolagem = false, inicioRodar = 0, yNoInicio = 0;
+  function maximo() {
+    if (modoTopo) { return Math.max(0, flip.offsetHeight - alturaJanela()); }
+    return Math.max(0, alturaPagina() - alturaJanela());
+  }
+  function rolagemAtual() {
+    return window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+  }
+  function invertidoV() { return espelho === 2 || espelho === 3; }
+  function alvo() { return Math.round(invertidoV() ? maximo() - pos : pos); }
+
+  function aplicar() {
+    if (modoTopo) { flip.style.top = (-alvo()) + 'px'; } else { window.scrollTo(0, alvo()); }
+  }
+  function lerPosicao() {
+    if (modoTopo) { return; }
+    var y = rolagemAtual();
+    pos = invertidoV() ? maximo() - y : y;
+  }
+  function prepararModoTopo() {
+    leitura.style.height = alturaJanela() + 'px';
+    leitura.style.overflow = 'hidden';
+    flip.style.position = 'relative';
+  }
+  function ativarModoTopo() {
+    modoTopo = true;
+    window.scrollTo(0, 0);
+    prepararModoTopo();
+    aplicar();
+    if (typeof logar === 'function') { logar('rolagem da pagina nao andou: usando plano B'); }
+  }
+
+  function ajustarMargens() {
+    var h = alturaJanela();
+    // O texto comeca a 1/3 da tela e pode rolar ate sumir
+    texto.style.paddingTop = Math.round(h * 0.33) + 'px';
+    texto.style.paddingBottom = h + 'px';
+  }
+
+  function aplicarEspelho() {
+    var sx = (espelho === 1 || espelho === 3) ? -1 : 1;
+    var sy = invertidoV() ? -1 : 1;
+    var v = (sx === 1 && sy === 1) ? 'none' : 'scale(' + sx + ',' + sy + ')';
+    flip.style.webkitTransform = v; flip.style.transform = v;
+  }
+
+  function atualizarInfo() {
+    info.innerHTML = 'Velocidade: ' + vel + ' &nbsp;|&nbsp; Letra: ' + fonte +
+      ' &nbsp;|&nbsp; ' + nomesEspelho[espelho];
+    $('bEspelho').innerHTML = nomesEspelho[espelho];
+  }
+
+  function quadro() {
+    if (!rodando) { return; }
+    var t = agora();
+    var dt = (t - ultimo) / 1000;
+    ultimo = t;
+    if (dt > 0.5) { dt = 0.5; }
+    pos += vel * dt;
+    // Depois de 1,2 s rolando, confere uma vez se a tela andou de verdade
+    if (!modoTopo && !testouRolagem && t - inicioRodar > 1200) {
+      testouRolagem = true;
+      if (Math.abs(rolagemAtual() - yNoInicio) < 2 && Math.abs(alvo() - yNoInicio) > 20) { ativarModoTopo(); }
+    }
+    var m = maximo();
+    if (pos >= m) { pos = m; aplicar(); pausar(); return; }
+    aplicar();
+  }
+
+  function rodar() {
+    if (rodando || !lendo) { return; }
+    lerPosicao();
+    rodando = true; ultimo = agora();
+    inicioRodar = ultimo; yNoInicio = rolagemAtual();
+    barra.style.display = 'none';
+    if (relogio) { window.clearInterval(relogio); }
+    relogio = window.setInterval(quadro, 30);
+    // Diagnostico (so no modo Wi-Fi): confirma ao PC se a tela realmente andou
+    window.setTimeout(function () {
+      if (typeof logar === 'function') {
+        logar('2s depois de rolar: pos=' + Math.round(pos) + ' rolagem=' + rolagemAtual() +
+          ' max=' + maximo() + ' rodando=' + rodando);
+      }
+    }, 2000);
+  }
+  function pausar() {
+    rodando = false;
+    if (relogio) { window.clearInterval(relogio); relogio = null; }
+    if (lendo) { barra.style.display = 'block'; }
+  }
+
+  function abrirLeitura() {
+    salvar('texto', roteiro.value);
+    try { roteiro.blur(); } catch (e) {}
+    texto.style.fontSize = fonte + 'px';
+    texto.innerHTML = '';
+    texto.appendChild(document.createTextNode(roteiro.value || 'Sem texto. Toque em Editar.'));
+    setup.style.display = 'none';
+    leitura.style.display = 'block';
+    lendo = true; rodando = false;
+    ajustarMargens(); aplicarEspelho(); atualizarInfo();
+    if (modoTopo) { prepararModoTopo(); }
+    barra.style.display = 'block';
+    pos = 0;
+    // Espera o navegador montar a pagina antes de posicionar
+    window.setTimeout(function () { ajustarMargens(); pos = 0; aplicar(); }, 150);
+  }
+
+  function abrirEdicao() {
+    pausar();
+    lendo = false;
+    leitura.style.display = 'none'; barra.style.display = 'none';
+    setup.style.display = 'block';
+    window.scrollTo(0, 0);
+  }
+
+  // Tocar no texto: pausa se estiver rolando, rola se estiver pausado
+  leitura.addEventListener('click', function () {
+    if (rodando) { pausar(); } else { rodar(); }
+  }, false);
+
+  ao('bIniciar', abrirLeitura);
+  ao('bRolar', rodar);
+  ao('bLimpar', function () {
+    if (window.confirm('Apagar todo o texto?')) { roteiro.value = ''; salvar('texto', ''); }
+  });
+  ao('bVelMenos', function () { vel = Math.max(5, vel - 5); salvar('vel', vel); atualizarInfo(); });
+  ao('bVelMais', function () { vel = Math.min(400, vel + 5); salvar('vel', vel); atualizarInfo(); });
+  function mudarFonte(d) {
+    lerPosicao();
+    var m = maximo() || 1, fracao = pos / m;
+    fonte = Math.max(16, Math.min(160, fonte + d));
+    texto.style.fontSize = fonte + 'px';
+    pos = fracao * maximo();
+    aplicar(); salvar('fonte', fonte); atualizarInfo();
+  }
+  ao('bFonteMenos', function () { mudarFonte(-4); });
+  ao('bFonteMais', function () { mudarFonte(4); });
+  ao('bEspelho', function () {
+    lerPosicao();
+    espelho = (espelho + 1) % 4; salvar('espelho', espelho);
+    aplicarEspelho(); atualizarInfo(); aplicar();
+  });
+  ao('bInicio', function () { pos = 0; aplicar(); });
+  ao('bEditar', abrirEdicao);
+
+  // ---- Controle remoto Bluetooth / teclado ----
+  // Mostra na tela (e manda ao PC) o codigo de cada botao apertado, para mapear qualquer controle.
+  var avisoTecla = $('avisoTecla'), tAviso = null;
+  function mostrarTecla(t) {
+    avisoTecla.innerHTML = t; avisoTecla.style.display = 'block';
+    if (tAviso) { window.clearTimeout(tAviso); }
+    tAviso = window.setTimeout(function () { avisoTecla.style.display = 'none'; }, 1800);
+  }
+  function moverLinhas(n) {
+    if (!lendo) { return; }
+    lerPosicao();
+    pos += n * Math.round(fonte * 1.35);
+    var m = maximo();
+    if (pos < 0) { pos = 0; }
+    if (pos > m) { pos = m; }
+    aplicar();
+  }
+  function velTecla(d) { vel = Math.max(5, Math.min(400, vel + d)); salvar('vel', vel); atualizarInfo(); }
+
+  var T_PLAY = { 32: 1, 13: 1, 179: 1, 19: 1, 250: 1, 130: 1 };
+  var T_CIMA = { 38: 1, 33: 1, 177: 1 };
+  var T_BAIXO = { 40: 1, 34: 1, 176: 1 };
+  var T_ESQ = { 37: 1, 174: 1, 189: 1, 109: 1 };
+  var T_DIR = { 39: 1, 175: 1, 187: 1, 107: 1 };
+
+  // Navegador antigo do Android manda keyCode 0 para varios botoes; o nome vem em keyIdentifier
+  var POR_NOME = { 'Enter': 13, 'U+0020': 32, 'Up': 38, 'Down': 40, 'Left': 37, 'Right': 39,
+    'PageUp': 33, 'PageDown': 34, 'Home': 36, 'MediaPlayPause': 179, 'MediaNextTrack': 176,
+    'MediaPreviousTrack': 177, 'Pause': 19 };
+  var ultLog = '', ultLogT = 0, repetidos = 0;
+  function logTecla(m) {
+    var t = agora();
+    if (m === ultLog && t - ultLogT < 400) { repetidos++; ultLogT = t; return; }
+    if (repetidos) { logar('  (repetiu ' + repetidos + 'x)'); repetidos = 0; }
+    ultLog = m; ultLogT = t;
+    logar(m);
+  }
+  document.addEventListener('keypress', function (e) {
+    if (typeof logar === 'function') { logTecla('KEYPRESS charCode=' + (e.charCode || 0) + ' keyCode=' + (e.keyCode || 0)); }
+  }, false);
+  document.addEventListener('keyup', function (e) {
+    if (typeof logar === 'function' && !(e.keyCode || e.which)) {
+      logTecla('KEYUP ident=' + (e.keyIdentifier || '-'));
+    }
+  }, false);
+
+  document.addEventListener('keydown', function (e) {
+    var ident = e.keyIdentifier || e.key || '';
+    var k = e.keyCode || e.which || POR_NOME[ident] || 0;
+    var digitando = !lendo && document.activeElement === roteiro;
+    var acao = '';
+    if (T_PLAY[k]) {
+      if (digitando) { return; }
+      if (!lendo) { abrirLeitura(); window.setTimeout(rodar, 400); acao = 'iniciar'; }
+      else if (rodando) { pausar(); acao = 'pausar'; }
+      else { rodar(); acao = 'rolar'; }
+    } else if (lendo && T_CIMA[k]) {
+      if (rodando) { velTecla(-5); acao = 'mais devagar'; } else { moverLinhas(-2); acao = 'voltar texto'; }
+    } else if (lendo && T_BAIXO[k]) {
+      if (rodando) { velTecla(5); acao = 'mais rápido'; } else { moverLinhas(2); acao = 'avançar texto'; }
+    } else if (lendo && T_ESQ[k]) { velTecla(-5); acao = 'mais devagar'; }
+    else if (lendo && T_DIR[k]) { velTecla(5); acao = 'mais rápido'; }
+
+    if (acao) { e.preventDefault(); }
+    if (!digitando) {
+      mostrarTecla('Botão ' + (k || ident || '?') + (acao ? ' &rarr; ' + acao : ' (sem função)'));
+    }
+    if (typeof logar === 'function') {
+      logTecla('TECLA keyCode=' + (e.keyCode || 0) + ' which=' + (e.which || 0) + ' ident=' + (ident || '-') +
+        ' code=' + (e.code || '-') + ' acao=' + (acao || 'nenhuma') + ' tela=' + (lendo ? 'leitura' : 'edicao'));
+    }
+  }, false);
+
+  // ---- Carregar o roteiro de um arquivo do cartao ----
+  // Procura, nesta ordem, ao lado do teleprompter.html e na raiz do cartao.
+  // "texto.txt" e o nome que o iPhone da ao colar um texto no app Arquivos.
+  var NOTAS = 'Dados de texto com formatação da área de transferência do app Notas';
+  var CANDIDATOS = ['texto.txt', 'texto 2.txt', 'texto 3.txt', 'Texto.txt', 'texto.html', 'Texto.html',
+    NOTAS + '.html', 'roteiro.txt', '../texto.txt', '../roteiro.txt'];
+  var msg = $('msg');
+
+  function dizer(t, erro) { msg.className = erro ? 'erro' : ''; msg.innerHTML = t; }
+
+  // Arquivo colado pelo iPhone (app Notas -> app Arquivos) vem como pagina HTML:
+  // tira as marcacoes e fica so o texto, respeitando as quebras de linha.
+  function htmlParaTexto(s) {
+    s = s.replace(/<(script|style|head|title)[\s\S]*?<\/\1>/gi, '').replace(/<img[^>]*>/gi, '');
+    var d = document.createElement('div');
+    d.innerHTML = s;
+    var saida = '';
+    function fimDeLinha() { return saida === '' || saida.charAt(saida.length - 1) === '\n'; }
+    function anda(n) {
+      for (var c = n.firstChild; c; c = c.nextSibling) {
+        if (c.nodeType === 3) {
+          var v = c.nodeValue.replace(/[\s ]+/g, ' ');
+          if (fimDeLinha()) { v = v.replace(/^ /, ''); }
+          saida += v;
+        } else if (c.nodeType === 1) {
+          var tag = c.tagName.toLowerCase();
+          if (tag === 'br') { saida += '\n'; continue; }
+          var bloco = /^(p|div|li|h[1-6]|tr|ul|ol|blockquote|pre)$/.test(tag);
+          if (bloco && !fimDeLinha()) { saida += '\n'; }
+          anda(c);
+          if (bloco && !fimDeLinha()) { saida += '\n'; }
+        }
+      }
+    }
+    anda(d);
+    return saida.replace(/ +\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/^\s+|\s+$/g, '');
+  }
+
+  function limparTexto(t) {
+    if (t.charCodeAt(0) === 0xFEFF) { t = t.substring(1); }
+    // Formato interno do app Notas (binario): nao da para ler
+    if (t.substring(0, 6) === 'bplist') { return ''; }
+    if (/<\/(p|div|span|body|html)>/i.test(t)) { t = htmlParaTexto(t); }
+    return t.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  }
+
+  function porXhr(url, ok, falha) {
+    var feito = false;
+    function fim(t) { if (feito) { return; } feito = true; if (t) { ok(t); } else { falha(); } }
+    try {
+      var x = new XMLHttpRequest();
+      x.open('GET', url, true);
+      if (x.overrideMimeType) { x.overrideMimeType('text/plain; charset=utf-8'); }
+      x.onreadystatechange = function () {
+        if (x.readyState !== 4) { return; }
+        var t = '';
+        try { if (x.status === 200 || x.status === 0) { t = x.responseText || ''; } } catch (e) {}
+        fim(t);
+      };
+      x.onerror = function () { fim(''); };
+      x.send(null);
+      window.setTimeout(function () { fim(''); }, 3000);
+    } catch (e) { fim(''); }
+  }
+
+  function porIframe(url, ok, falha) {
+    var feito = false, f = document.createElement('iframe');
+    function fim(t) {
+      if (feito) { return; } feito = true;
+      try { document.body.removeChild(f); } catch (e) {}
+      if (t) { ok(t); } else { falha(); }
+    }
+    f.style.position = 'absolute'; f.style.left = '-9999px'; f.style.width = '10px'; f.style.height = '10px';
+    f.onload = function () {
+      var t = '';
+      try {
+        var b = f.contentDocument.body;
+        // Um .txt aberto pelo navegador vira um unico <pre>; qualquer outra coisa e pagina de erro
+        if (b && b.children.length === 1 && b.children[0].tagName === 'PRE') {
+          t = b.children[0].textContent || '';
+        }
+      } catch (e) {}
+      fim(t);
+    };
+    f.onerror = function () { fim(''); };
+    window.setTimeout(function () { fim(''); }, 3000);
+    f.src = url;
+    document.body.appendChild(f);
+  }
+
+  // Tenta todos os nomes ao mesmo tempo e devolve a lista do que achou (na ordem de CANDIDATOS)
+  function procurarTodos(pronto) {
+    var achados = [], faltam = CANDIDATOS.length;
+    function um(i) {
+      var nome = CANDIDATOS[i], url = encodeURI(nome), ehTxt = /\.txt$/i.test(nome);
+      function fim(t) {
+        t = t ? limparTexto(t) : '';
+        if (t) { achados[i] = { nome: nome, texto: t }; }
+        faltam--;
+        if (faltam === 0) {
+          var lista = [];
+          for (var k = 0; k < CANDIDATOS.length; k++) { if (achados[k]) { lista.push(achados[k]); } }
+          pronto(lista);
+        }
+      }
+      porXhr(url, fim, function () {
+        if (ehTxt) { porIframe(url, fim, function () { fim(''); }); } else { fim(''); }
+      });
+    }
+    for (var i = 0; i < CANDIDATOS.length; i++) { um(i); }
+  }
+
+  function usarTexto(t, nome) {
+    if (!t) { dizer('Esse arquivo n&atilde;o tem texto que eu consiga ler.', true); return; }
+    roteiro.value = t; salvar('texto', t);
+    dizer('Roteiro carregado de ' + nome.replace('../', '') + ' (' + t.length + ' letras).');
+  }
+
+  function carregarDoCartao(automatico) {
+    if (!automatico) { dizer('Procurando o roteiro no cart&atilde;o...'); }
+    procurarTodos(function (lista) {
+      var i, novo = null;
+      // "Novo" e o arquivo cujo conteudo mudou desde a ultima vez que esta pagina o viu
+      for (i = 0; i < lista.length; i++) {
+        if (!novo && lista[i].texto !== ler('arq_' + lista[i].nome)) { novo = lista[i]; }
+      }
+      for (i = 0; i < lista.length; i++) { salvar('arq_' + lista[i].nome, lista[i].texto); }
+      if (lendo) { return; }
+      if (novo) { usarTexto(novo.texto, novo.nome); return; }
+      if (automatico) { return; }
+      if (lista.length) { usarTexto(lista[0].texto, lista[0].nome); return; }
+      dizer('N&atilde;o encontrei nenhum roteiro. Use o bot&atilde;o de escolher arquivo abaixo, ' +
+        'ou abra o arquivo no Meus Arquivos, copie e cole aqui.', true);
+    });
+  }
+
+  ao('bCarregar', function () { carregarDoCartao(false); });
+
+  $('arquivo').addEventListener('change', function () {
+    var a = this.files && this.files[0];
+    if (!a) { return; }
+    if (!window.FileReader) { dizer('Este navegador n&atilde;o consegue ler arquivos.', true); return; }
+    var r = new FileReader();
+    r.onload = function () { usarTexto(limparTexto(String(r.result || '')), a.name || 'arquivo'); };
+    r.onerror = function () { dizer('N&atilde;o consegui ler esse arquivo.', true); };
+    r.readAsText(a, 'UTF-8');
+  }, false);
+
+  // ---- Modo Wi-Fi: quando a pagina vem do PC (http), recebe texto e comandos do celular ----
+  // Modo PC: so quando a pagina vem do servidor do computador (porta 8080)
+  var EM_REDE = /^http/.test(window.location.protocol) && window.location.port === '8080';
+  // O iPhone e o controle remoto: se ele abrir o endereco do tablet, vai direto para a pagina de controle
+  if (EM_REDE && /iPhone|iPod/.test(navigator.userAgent)) { window.location.replace('/e'); return; }
+
+  function pedir(metodo, url, corpo, cb) {
+    try {
+      var x = new XMLHttpRequest();
+      x.open(metodo, url, true);
+      x.onreadystatechange = function () {
+        if (x.readyState !== 4) { return; }
+        var r = null;
+        try { if (x.status === 200) { r = x.responseText; } } catch (e) {}
+        if (cb) { cb(r); }
+      };
+      if (corpo !== null) { x.setRequestHeader('Content-Type', 'text/plain;charset=UTF-8'); }
+      x.send(corpo);
+    } catch (e) { if (cb) { cb(null); } }
+  }
+  // ---- Modo internet (sem PC): a pagina abre do cartao e conversa pelo ntfy.sh ----
+  var NTFY = !EM_REDE || /[?&]ntfy=1/.test(window.location.search);
+  var CANAL = 'tp-zw933qp89i4qinnaku';
+  var NTFY_URL = 'http://ntfy.sh/';
+  var ultLogNtfy = 0;
+
+  function publicar(topico, msg) {
+    try {
+      var x = new XMLHttpRequest();
+      x.open('POST', NTFY_URL + topico, true);
+      x.send(String(msg));
+    } catch (e) {}
+  }
+
+  function logar(m) {
+    if (EM_REDE) { pedir('POST', '/log', String(m), null); }
+    // No modo internet, manda so o essencial (o ntfy.sh limita a quantidade de mensagens por dia)
+    if (NTFY && agora() - ultLogNtfy > 4000) { ultLogNtfy = agora(); publicar(CANAL + '-log', String(m).substring(0, 300)); }
+  }
+
+  var verTexto = null, seqCmd = null, pedindoTexto = false;
+
+  function receberTexto(t) {
+    if (!t) { return; }
+    roteiro.value = t; salvar('texto', t);
+    dizer('Roteiro recebido do celular (' + t.length + ' letras).');
+    if (lendo) {
+      pausar();
+      texto.innerHTML = '';
+      texto.appendChild(document.createTextNode(t));
+      pos = 0; aplicar();
+    }
+    logar('texto recebido: ' + t.length + ' letras');
+  }
+
+  function mudarVel(d) { vel = Math.max(5, Math.min(400, vel + d)); salvar('vel', vel); atualizarInfo(); }
+
+  function executar(c) {
+    logar('comando: ' + c);
+    if (c === 'rolar') {
+      if (!lendo) { abrirLeitura(); window.setTimeout(rodar, 400); } else { rodar(); }
+    } else if (c === 'pausar') { pausar(); }
+    else if (c === 'mais') { mudarVel(10); }
+    else if (c === 'menos') { mudarVel(-10); }
+    else if (c === 'inicio') { if (lendo) { pos = 0; aplicar(); } }
+    else if (c === 'letra+') { if (lendo) { mudarFonte(4); } }
+    else if (c === 'letra-') { if (lendo) { mudarFonte(-4); } }
+    else if (c === 'espelho') { $('bEspelho').click(); }
+    else if (c === 'editar') { abrirEdicao(); }
+    else if (c === 'alternar') {
+      if (!lendo) { abrirLeitura(); window.setTimeout(rodar, 400); }
+      else if (rodando) { pausar(); } else { rodar(); }
+    }
+    else if (c === 'cima') { if (lendo) { if (rodando) { velTecla(-5); } else { moverLinhas(-2); } } }
+    else if (c === 'baixo') { if (lendo) { if (rodando) { velTecla(5); } else { moverLinhas(2); } } }
+  }
+
+  function consultar() {
+    pedir('GET', '/estado?' + agora(), null, function (r) {
+      if (r === null) { return; }
+      var p = r.split('|');
+      if (seqCmd === null) { seqCmd = p[1]; }
+      if (p[0] !== verTexto && !pedindoTexto) {
+        pedindoTexto = true;
+        pedir('GET', '/texto?' + agora(), null, function (t) {
+          pedindoTexto = false;
+          if (t === null) { return; }
+          verTexto = p[0];
+          receberTexto(t);
+        });
+      }
+      if (p[1] !== seqCmd) { seqCmd = p[1]; executar(p[2]); }
+    });
+  }
+
+  // Restaurar o que estava salvo
+  var s;
+  s = ler('texto'); if (s !== null) { roteiro.value = s; }
+  s = parseInt(ler('vel'), 10); if (s >= 5 && s <= 400) { vel = s; }
+  s = parseInt(ler('fonte'), 10); if (s >= 16 && s <= 160) { fonte = s; }
+  s = parseInt(ler('espelho'), 10); if (s >= 0 && s <= 3) { espelho = s; }
+
+  // ---- Recepcao pelo ntfy.sh ----
+  var ultimoId = null, partes = {}, geracao = 0, ultDado = 0, abriuStream = false, modoPoll = false;
+
+  function juntarTexto(m) {
+    // formato: txt:<id>:<parte>:<total>:<texto codificado>
+    var p = m.split(':');
+    if (p.length < 5) { return; }
+    var id = p[1], i = parseInt(p[2], 10), n = parseInt(p[3], 10);
+    var dado = p.slice(4).join(':');
+    if (!partes[id]) { partes[id] = { n: n, tem: 0, p: [] }; }
+    var g = partes[id];
+    if (g.p[i] === undefined) { g.p[i] = dado; g.tem++; }
+    if (g.tem === g.n) {
+      var t = '';
+      try { t = decodeURIComponent(g.p.join('')); } catch (e) { logar('texto com defeito'); return; }
+      delete partes[id];
+      return t;
+    }
+    return null;
+  }
+
+  function tratar(ev, soTexto) {
+    if (!ev || ev.event !== 'message') { if (ev && ev.event === 'open') { abriuStream = true; } return; }
+    ultimoId = ev.id;
+    var m = ev.message || '';
+    if (m.indexOf('txt:') === 0) {
+      var t = juntarTexto(m);
+      if (t) { receberTexto(t); if (!soTexto) { publicar(CANAL + '-st', 'texto:' + t.length); } }
+    } else if (soTexto) {
+      return;
+    } else if (m.indexOf('cmd:') === 0) {
+      var c = m.substring(4);
+      executar(c);
+      publicar(CANAL + '-st', 'ok:' + c);
+    } else if (m === 'ping') {
+      publicar(CANAL + '-st', 'vivo');
+    }
+  }
+
+  function linhas(txt, cb) {
+    var ls = txt.split('\n');
+    for (var i = 0; i < ls.length; i++) {
+      if (ls[i]) { try { cb(JSON.parse(ls[i])); } catch (e) {} }
+    }
+  }
+
+  function abrirStream() {
+    var minha = ++geracao, lido = 0, x;
+    abriuStream = false;
+    try {
+      x = new XMLHttpRequest();
+      x.open('GET', NTFY_URL + CANAL + '/json' + (ultimoId ? '?since=' + ultimoId : ''), true);
+    } catch (e) { logar('stream nao abriu: ' + e.message); ativarPoll(); return; }
+    x.onreadystatechange = function () {
+      if (minha !== geracao) { return; }
+      if (x.readyState === 3 || x.readyState === 4) {
+        var t = '';
+        try { t = x.responseText || ''; } catch (e) {}
+        var i;
+        while ((i = t.indexOf('\n', lido)) >= 0) {
+          var l = t.substring(lido, i);
+          lido = i + 1;
+          ultDado = agora();
+          if (l) { try { tratar(JSON.parse(l), false); } catch (e) {} }
+        }
+      }
+      if (x.readyState === 4) { geracao++; window.setTimeout(abrirStream, 2000); }
+    };
+    ultDado = agora();
+    x.send(null);
+    window.__stream = x;
+    // Se o navegador nao entregar o streaming, usa consulta periodica
+    window.setTimeout(function () {
+      if (minha === geracao && !abriuStream && !modoPoll) {
+        logar('streaming nao funcionou, usando consulta a cada 5 s');
+        geracao++;
+        try { x.abort(); } catch (e) {}
+        ativarPoll();
+      }
+    }, 8000);
+  }
+
+  function consultaNtfy() {
+    pedir('GET', NTFY_URL + CANAL + '/json?poll=1' + (ultimoId ? '&since=' + ultimoId : '&since=30s'), null, function (r) {
+      if (r) { linhas(r, function (ev) { tratar(ev, false); }); }
+    });
+  }
+  function ativarPoll() {
+    if (modoPoll) { return; }
+    modoPoll = true;
+    window.setInterval(consultaNtfy, 5000);
+  }
+
+  function iniciarNtfy() {
+    // 1) busca o ultimo roteiro guardado no ntfy (ate 12 h) e 2) fica escutando os comandos
+    pedir('GET', NTFY_URL + CANAL + '/json?poll=1&since=12h', null, function (r) {
+      if (r) { linhas(r, function (ev) { tratar(ev, true); }); }
+      partes = {};
+      abrirStream();
+      window.setInterval(function () {
+        if (!modoPoll && window.__stream && agora() - ultDado > 75000) {
+          logar('sem sinal do ntfy, reconectando');
+          geracao++;
+          try { window.__stream.abort(); } catch (e) {}
+          abrirStream();
+        }
+      }, 15000);
+      publicar(CANAL + '-st', 'vivo');
+    });
+  }
+
+  if (NTFY || EM_REDE) {
+    $('caixaArquivo').style.display = 'none';
+    var erroAntigo = window.onerror;
+    window.onerror = function (m, u, l) { logar('ERRO: ' + m + ' linha ' + l); if (erroAntigo) { erroAntigo(m, u, l); } };
+  }
+  if (NTFY) {
+    $('ajudaCartao').innerHTML = '<b>Ligado pela internet.</b> O texto e os comandos do celular chegam aqui sozinhos.';
+    logar('pagina aberta, v11 internet (' + window.location.protocol + '), tela ' + window.innerWidth + 'x' + window.innerHeight + ', ' + navigator.userAgent);
+    iniciarNtfy();
+  } else if (EM_REDE) {
+    $('ajudaCartao').innerHTML = '<b>Ligado ao PC pelo Wi-Fi.</b> O texto enviado pelo celular aparece aqui sozinho.';
+    logar('pagina aberta, v10, tela ' + window.innerWidth + 'x' + window.innerHeight + ', ' + navigator.userAgent);
+    consultar();
+    window.setInterval(consultar, 1000);
+  }
+})();
+</script>
+</body>
+</html>
